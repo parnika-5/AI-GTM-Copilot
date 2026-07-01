@@ -12,22 +12,33 @@ export default function App() {
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
   const [step, setStep] = useState(0);
 
   const handleSubmit = async () => {
     setLoading(true);
     setData(null);
+    setError(null);
+    setStep(0);
 
     const interval = setInterval(() => {
       setStep((s) => (s < 4 ? s + 1 : s));
     }, 700);
 
-    const res = await generateCampaign(form);
-
-    clearInterval(interval);
-    setStep(4);
-    setData(res);
-    setLoading(false);
+    try {
+      const res = await generateCampaign(form);
+      setData(res);
+    } catch (err) {
+      const message =
+        err.response?.data?.error ||
+        err.message ||
+        "Could not reach the backend. Is it running on port 5001?";
+      setError(message);
+    } finally {
+      clearInterval(interval);
+      setStep(4);
+      setLoading(false);
+    }
   };
 
   return (
@@ -60,6 +71,12 @@ export default function App() {
       </button>
 
       {loading && <div className="mt-4"><Loader step={step} /></div>}
+
+      {error && (
+        <div className="mt-4 p-3 bg-red-900/40 border border-red-700 rounded text-red-200">
+          {error}
+        </div>
+      )}
 
       {data && (
         <div className="mt-6">

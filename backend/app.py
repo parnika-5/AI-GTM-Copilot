@@ -8,61 +8,163 @@ from prompt import build_prompt
 import json
 import os
 
-# Load .env from the backend directory, regardless of where Flask is started.
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
 BASE_DIR = Path(__file__).resolve().parent
+
 load_dotenv(BASE_DIR / ".env")
 
 app = Flask(__name__)
 
-# Configure CORS for local development and the deployed frontend.
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+CORS(app)
 
-frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+# Demo mode is enabled by default.
+# Set DEMO_MODE=false to enable real OpenAI generation.
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
 
-if frontend_url:
-    allowed_origins.append(frontend_url)
 
-CORS(app, resources={
-    r"/generate": {"origins": allowed_origins}
-})
+# --------------------------------------------------
+# SAMPLE CAMPAIGN GENERATOR
+# --------------------------------------------------
 
-# Initialize the client only when a request needs it.
-# This allows Flask to start even if the API key has not been configured.
+def generate_demo_campaign(company, website, description):
+
+    return {
+        "research_summary": (
+            f"DEMO DATA — SAMPLE CAMPAIGN\n\n"
+            f"{company} is the target company for this demonstration. "
+            f"Based on the information provided, the company operates in "
+            f"the following area: {description or 'Not specified'}. "
+            f"The following campaign illustrates how an AI-assisted "
+            f"sales workflow could organize prospect information and "
+            f"generate personalized outreach. "
+            f"No live website research or AI generation was performed."
+        ),
+
+        "pain_points": [
+            "HYPOTHESIS: The company may be looking for ways to improve operational efficiency.",
+            "HYPOTHESIS: Teams may spend significant time on repetitive manual workflows.",
+            "HYPOTHESIS: Scaling technical operations could introduce cost or performance challenges."
+        ],
+
+        "buying_signals": [
+            "HYPOTHESIS: Investment in new technical initiatives could create demand for additional tools.",
+            "HYPOTHESIS: Expansion of product capabilities could increase infrastructure requirements.",
+            "HYPOTHESIS: A focus on efficiency could motivate evaluation of alternative solutions."
+        ],
+
+        "email": (
+            f"Subject: Exploring opportunities at {company}\n\n"
+            f"Hi [First Name],\n\n"
+            f"I came across {company} and was interested in your work "
+            f"in {description or 'your industry'}.\n\n"
+            f"I'm reaching out to learn how your team is approaching "
+            f"its current technical and operational priorities. "
+            f"If improving efficiency or scaling existing workflows "
+            f"is on your roadmap, I'd welcome the opportunity to "
+            f"understand your requirements and explore whether "
+            f"there may be a fit.\n\n"
+            f"Would you be open to a brief conversation next week?\n\n"
+            f"Best,\n"
+            f"[Your Name]"
+        ),
+
+        "linkedin_message": (
+            f"Hi [First Name]! I came across {company} and was "
+            f"interested in the work your team is doing. "
+            f"I'd love to learn more about your current priorities "
+            f"and explore whether there's an opportunity to connect. "
+            f"Would you be open to a quick conversation?"
+        ),
+
+        "cold_call_script": (
+            f"Hi [First Name], this is [Your Name]. "
+            f"Did I catch you at an okay time?\n\n"
+            f"I'm reaching out because I was interested in "
+            f"{company}'s work and wanted to learn more about "
+            f"your team's current priorities.\n\n"
+            f"Are there any challenges you're currently facing "
+            f"around efficiency, scalability, or technical workflows?\n\n"
+            f"[Listen and ask follow-up questions.]\n\n"
+            f"How is that affecting your team today?\n\n"
+            f"If it makes sense, I'd be happy to arrange a "
+            f"follow-up conversation to explore your requirements."
+        ),
+
+        "follow_up_1": (
+            f"Subject: Following up — {company}\n\n"
+            f"Hi [First Name],\n\n"
+            f"Just following up on my previous message. "
+            f"I'd be interested in learning more about your "
+            f"team's priorities and whether a conversation "
+            f"would be useful.\n\n"
+            f"Would you have 15 minutes next week?\n\n"
+            f"Best,\n"
+            f"[Your Name]"
+        ),
+
+        "follow_up_2": (
+            f"Subject: Closing the loop\n\n"
+            f"Hi [First Name],\n\n"
+            f"I wanted to reach out one last time. "
+            f"If exploring new solutions isn't a priority "
+            f"for {company} right now, I completely understand.\n\n"
+            f"Happy to reconnect whenever the timing is better.\n\n"
+            f"Best,\n"
+            f"[Your Name]"
+        )
+    }
+
+
+# --------------------------------------------------
+# OPENAI CLIENT
+# --------------------------------------------------
+
 def get_openai_client():
+
     api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
         raise RuntimeError(
-            "OPENAI_API_KEY is missing. Add it to backend/.env "
-            "or configure it in your hosting environment."
+            "OPENAI_API_KEY is missing."
         )
 
     return OpenAI(api_key=api_key)
 
 
+# --------------------------------------------------
+# ROUTES
+# --------------------------------------------------
+
 @app.route("/", methods=["GET"])
 def home():
+
     return jsonify({
         "status": "ok",
-        "message": "AI GTM Copilot backend is running."
+        "message": "AI GTM Copilot backend is running.",
+        "demo_mode": DEMO_MODE
     })
 
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy"})
+
+    return jsonify({
+        "status": "healthy",
+        "demo_mode": DEMO_MODE
+    })
 
 
 @app.route("/generate", methods=["POST"])
 def generate():
+
     data = request.get_json(silent=True)
 
     if not isinstance(data, dict):
         return jsonify({
-            "error": "Please send a valid JSON request."
+            "error": "Please provide a valid JSON request."
         }), 400
 
     company = str(data.get("company") or "").strip()
@@ -76,13 +178,41 @@ def generate():
 
     if not website and not description:
         return jsonify({
-            "error": "Please provide a website or company description."
+            "error": "Please enter a website or description."
         }), 400
 
-    prompt = build_prompt(company, website, description)
+    # --------------------------------------------------
+    # DEMO MODE: NO OPENAI API CALL
+    # --------------------------------------------------
+
+    if DEMO_MODE:
+
+        app.logger.info(
+            "Generating demo campaign for %s",
+            company
+        )
+
+        campaign = generate_demo_campaign(
+            company,
+            website,
+            description
+        )
+
+        return jsonify(campaign), 200
+
+    # --------------------------------------------------
+    # LIVE MODE: OPENAI API
+    # --------------------------------------------------
 
     try:
+
         client = get_openai_client()
+
+        prompt = build_prompt(
+            company,
+            website,
+            description
+        )
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -92,7 +222,7 @@ def generate():
                     "content": (
                         "You are a GTM research assistant. "
                         "Return only valid JSON. "
-                        "Do not invent verified facts about companies."
+                        "Do not invent verified company facts."
                     )
                 },
                 {
@@ -100,7 +230,9 @@ def generate():
                     "content": prompt
                 }
             ],
-            response_format={"type": "json_object"},
+            response_format={
+                "type": "json_object"
+            },
             temperature=0.7,
             timeout=60.0
         )
@@ -109,48 +241,61 @@ def generate():
 
         if not content:
             return jsonify({
-                "error": "The AI returned an empty response. Please try again."
+                "error": "The AI returned an empty response."
             }), 502
 
         parsed = json.loads(content)
 
-        if not isinstance(parsed, dict):
-            return jsonify({
-                "error": "The AI returned an unexpected response format."
-            }), 502
-
         return jsonify(parsed), 200
 
     except RuntimeError as error:
-        app.logger.error("Configuration error: %s", error)
+
+        app.logger.error(
+            "Configuration error: %s",
+            error
+        )
 
         return jsonify({
-            "error": "The server's OpenAI API key is not configured."
+            "error": "The OpenAI API key is not configured."
         }), 503
 
     except (OpenAIError, json.JSONDecodeError) as error:
-        app.logger.error("AI generation failed: %s", error)
+
+        app.logger.error(
+            "AI generation failed: %s",
+            error
+        )
 
         return jsonify({
             "error": (
-                "AI generation failed. Check your API key, "
-                "API billing, and server logs."
+                "AI generation failed. "
+                "Check your API key and billing."
             )
         }), 502
 
     except Exception:
-        app.logger.exception("Unexpected error during generation")
+
+        app.logger.exception(
+            "Unexpected error during generation"
+        )
 
         return jsonify({
             "error": "An unexpected server error occurred."
         }), 500
 
 
+# --------------------------------------------------
+# START SERVER
+# --------------------------------------------------
+
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5001"))
+
+    port = int(
+        os.getenv("PORT", "5001")
+    )
 
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=os.getenv("FLASK_DEBUG", "false").lower() == "true"
+        debug=False
     )
